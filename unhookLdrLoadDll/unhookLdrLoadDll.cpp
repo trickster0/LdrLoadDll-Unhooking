@@ -77,25 +77,38 @@ int main()
 	UNICODE_STRING ldrldll;
 	OBJECT_ATTRIBUTES objectAttributes = { 0 };
 	wchar_t ldrstring[] = L"Wininet.dll";
+	
+	//Obtaining LdrLoadDll Address from loaded NTDLL
 	RtlInitUnicodeString(&ldrldll, ldrstring);
 	InitializeObjectAttributes(&objectAttributes, &ldrldll, OBJ_CASE_INSENSITIVE, NULL, NULL);
+	LPVOID origLdrLoadDll = GetProcAddress(GetModuleHandleA("ntdll.dll"),"LdrLoadDll");
+	
+	//Setting up the structure of the trampoline for the instructions
 	unsigned char jumpPrelude[] = { 0x49, 0xBB };
 	unsigned char jumpAddress[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF };
 	unsigned char jumpEpilogue[] = { 0x41, 0xFF, 0xE3, 0xC3 };
-	LPVOID trampoline = VirtualAlloc(NULL,19, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-	printf("Address of trampoline at 0x%p\n", trampoline);
-	LPVOID origLdrLoadDll = GetProcAddress(GetModuleHandleA("ntdll.dll"),"LdrLoadDll");
-	printf("Original LdrLoadDll at 0x%p\n",origLdrLoadDll);
-	CCopyMemory(trampoline,(PVOID)"\x48\x89\x5c\x24\x10", 5);
 	LPVOID jmpAddr = (void*)((char*)origLdrLoadDll + 0x5);
 	*(void**)(jumpAddress) = jmpAddr;
+	
+	//Allocating the memory for the strcture and its instructions
+	LPVOID trampoline = VirtualAlloc(NULL,19, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+	printf("Address of trampoline at 0x%p\n", trampoline);
+	printf("Original LdrLoadDll at 0x%p\n",origLdrLoadDll);
 	printf("Original jmp Address at 0x%p\n", jmpAddr);
+	
+	//Copying the original instruction mov qword ptr [rsp+10h],rbx in the trampoline and jumping back to the rest of the execution for LdrLoadDll
+	CCopyMemory(trampoline,(PVOID)"\x48\x89\x5c\x24\x10", 5);
+	//Setting up the JMP address in the original LdrLoadDll
 	CCopyMemory((PBYTE)trampoline+5, jumpPrelude, 2);
 	CCopyMemory((PBYTE)trampoline + 5 + 2, jumpAddress, sizeof(jumpAddress));
 	CCopyMemory((PBYTE)trampoline + 5 + 2 + 8, jumpEpilogue, 4);
+	
+	//Making the Allocated memory executable RX
 	DWORD oldProtect = 0;
 	VirtualProtect(trampoline,30,PAGE_EXECUTE_READ,&oldProtect);
 	LdrLoadrDll = (pNewLdrLoadDll)trampoline;
+	
+	//Loading Wininet.dll
 	HANDLE wininetmodule = NULL;
 	LdrLoadrDll(NULL, 0 , &ldrldll, &wininetmodule);
 }
